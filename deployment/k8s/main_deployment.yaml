@@ -1,0 +1,44 @@
+# Main Server Deployment для ZeroLink v2.0
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zerolink-main
+  labels:
+    app: zerolink-main
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: zerolink-main
+  template:
+    metadata:
+      labels:
+        app: zerolink-main
+    spec:
+      containers:
+      - name: main
+        image: zerolink:latest
+        ports:
+        - containerPort: 8080
+        env:
+        - name: NODE_TYPE
+          value: "main"
+        volumeMounts:
+        - name: socket-volume
+          mountPath: /tmp
+      volumes:
+      - name: socket-volume
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: zerolink-main-service
+spec:
+  selector:
+    app: zerolink-main
+  ports:
+    - protocol: TCP
+      port: 8080
+      targetPort: 8080

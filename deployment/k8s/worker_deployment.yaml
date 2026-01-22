@@ -1,0 +1,32 @@
+# Worker Server Deployment для ZeroLink v2.0
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zerolink-worker
+  labels:
+    app: zerolink-worker
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: zerolink-worker
+  template:
+    metadata:
+      labels:
+        app: zerolink-worker
+    spec:
+      containers:
+      - name: worker
+        image: zerolink:latest
+        env:
+        - name: NODE_TYPE
+          value: "worker"
+        - name: MAIN_SERVICE_HOST
+          value: "zerolink-main-service"
+        volumeMounts:
+        - name: socket-volume
+          mountPath: /tmp
+      volumes:
+      - name: socket-volume
+        emptyDir: {}

@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: zerolink-config
+data:
+  socket-path: "/tmp/zerolink.sock"
+  gpu-device-id: "0"
+  gpu-pool-size-gb: "4"
+  num-cpu-workers: "4"
