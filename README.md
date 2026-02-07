@@ -90,7 +90,7 @@ while True:
 
 ## 📚 Дополнительная документация
 
-Смотрите `docs/architecture_unified.md` для деталей архитектуры, `docs/performance_analysis.md` для анализа производительности и `RELEASE.md` для списка изменений.
+Смотрите `docs/architecture_unified.md` для деталей архитектуры, `docs/performance_analysis.md` для анализа производительности, `docs/benchmarking.md` для запуска и интерпретации бенчмарков, `docs/error_check_report.md` (RU) / `docs/error_check_report.en.md` (EN) для статуса проверок окружения, `docs/proxy_dependency_resolution.md` для решения проблемы установки зависимостей через proxy и `RELEASE.md` для списка изменений.
 
 ## 🚀 Расширенные возможности
 
