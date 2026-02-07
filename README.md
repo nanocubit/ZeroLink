@@ -44,18 +44,32 @@ ZeroLink v2.0 обеспечивает значительный прирост �
 
 ```bash
 git clone <repo-url>
-cd pynexus_rex_v2
+cd zerolink
 
-# Установка зависимостей
+# Профили зависимостей
+# core (минимальный профиль)
 pip install -r requirements.txt
 
-# Сборка C++ Extension
+# gpu (PyTorch + CUDA Python)
+pip install -r requirements-gpu.txt
+
+# ray (distributed профиль)
+pip install -r requirements-ray.txt
+
+# dev (инструменты разработки)
+pip install -r requirements-dev.txt
+
+# Сборка C++ Extension (опционально, для GPU пути)
 python setup.py build_ext --inplace
 ```
 
 ### 2. Запуск тестов
 
 ```bash
+# CPU-only профиль (без conftest GPU импортов)
+pytest --noconftest tests/test_protocol.py -q
+
+# Полный прогон (требует GPU профиль и torch/cuda)
 pytest -q
 ```
 
@@ -79,7 +93,7 @@ runtime.start() # Запускает сервер в фоне
 ```python
 from zerolink.workers import GPUWorker
 
-worker = GPUWorker(sock_path="/tmp/pynexus.sock", device_id=0)
+worker = GPUWorker(sock_path="/tmp/zerolink.sock", device_id=0)
 worker.connect()
 
 # Event loop

@@ -113,12 +113,27 @@ def unpack_ctrl(data: bytes) -> Tuple[int, int, int, bytes]:
 # Alloc Payload (2-Phase Wrapper)
 # ============================================================================
 
-def pack_alloc_payload(lease_id: int, mapping_payload: bytes) -> bytes:
+def pack_alloc_payload(
+    lease_id: int,
+    mapping_payload: bytes,
+    mapping_hash: Optional[bytes] = None,
+) -> bytes:
     """
     Оборачивает PNXIPC10 mapping payload для отправки через ALLOC.
-    Формат: <u64 lease_id><u32 mapping_len><mapping_payload>
+    Форматы:
+      - без хэша: <u64 lease_id><u32 mapping_len><mapping_payload>
+      - с хэшем:  <u64 lease_id><u32 mapping_len><32B hash><mapping_payload>
+
+    Примечание:
+      наличие/отсутствие хэша в payload должно быть согласовано с флагом
+      CTRL_FLAG_HAS_HASH в control frame.
     """
-    return struct.pack("<QI", lease_id, len(mapping_payload)) + mapping_payload
+    payload = struct.pack("<QI", lease_id, len(mapping_payload))
+    if mapping_hash is not None:
+        if len(mapping_hash) != 32:
+            raise ValueError("mapping_hash must be exactly 32 bytes")
+        payload += mapping_hash
+    return payload + mapping_payload
 
 def unpack_alloc_payload(payload: bytes, ctrl_flags: int) -> Tuple[int, bytes, Optional[bytes]]:
     """

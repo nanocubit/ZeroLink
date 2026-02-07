@@ -196,10 +196,10 @@ static py::capsule import_vmm_segments(
   // Это позволяет объекту жить в Python, пока Capsule жива
   auto* sp = new std::shared_ptr<ImportedRegion>(std::move(region));
 
-  return py::capsule(sp, "pynexus.ImportedRegion",
+  return py::capsule(sp, "zerolink.ImportedRegion",
     [](PyObject* cap) {
       // Когда Capsule удаляется в Python (refcount=0)
-      auto* p = (std::shared_ptr<ImportedRegion>*)PyCapsule_GetPointer(cap, "pynexus.ImportedRegion");
+      auto* p = (std::shared_ptr<ImportedRegion>*)PyCapsule_GetPointer(cap, "zerolink.ImportedRegion");
       delete p; // Уменьшает shared_ptr. Если счетчик == 0 -> вызовется ~ImportedRegion
     }
   );

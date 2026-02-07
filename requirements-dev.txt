@@ -1,0 +1,6 @@
+# Development/test tools
+-r requirements.txt
+pytest>=7.0
+pytest-cov
+black
+mypy

@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61.0.0", "wheel", "torch"]
+requires = ["setuptools>=61.0.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -27,13 +27,32 @@ classifiers = [
 ]
 
 dependencies = [
-    "torch>=1.12.0",
-    "cuda-python>=11.7",
     "blake3>=0.4.0",
+    "numpy>=1.24.0",
 ]
 
 [project.optional-dependencies]
+gpu = [
+    "torch>=1.12.0",
+    "cuda-python>=11.7",
+]
+ray = [
+    "ray>=2.0.0",
+]
+cgpu = [
+    "cgpu>=0.1.0",
+]
 dev = [
+    "pytest>=7.0",
+    "pytest-cov",
+    "black",
+    "mypy",
+]
+full = [
+    "torch>=1.12.0",
+    "cuda-python>=11.7",
+    "ray>=2.0.0",
+    "cgpu>=0.1.0",
     "pytest>=7.0",
     "pytest-cov",
     "black",
@@ -41,10 +60,10 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/your-org/pynexus-rex"
-Documentation = "https://github.com/your-org/pynexus-rex/docs"
-Repository = "https://github.com/your-org/pynexus-rex.git"
-"Bug Tracker" = "https://github.com/your-org/pynexus-rex/issues"
+Homepage = "https://github.com/your-org/zerolink"
+Documentation = "https://github.com/your-org/zerolink/docs"
+Repository = "https://github.com/your-org/zerolink.git"
+"Bug Tracker" = "https://github.com/your-org/zerolink/issues"
 
 [tool.setuptools]
-packages = ["pynexus_rex"]
+packages = ["zerolink"]
