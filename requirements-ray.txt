@@ -1,0 +1,3 @@
+# Distributed Ray profile
+-r requirements-gpu.txt
+ray>=2.0.0

@@ -17,6 +17,7 @@ import selectors
 import threading
 import secrets
 import logging
+import json
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple, Any
 
@@ -36,6 +37,7 @@ from ..core.protocol.framing import recv_frame_with_fds, send_frame_with_fds, se
 
 # Импорты пула
 from ..core.gpu.vmm_pool import DeviceMemoryPoolV2, DeviceAllocation
+from ..monitoring.telemetry import observe_runtime_latency, record_alloc_failure, record_lease_event, update_active_leases
 
 # ============================================================================
 # Структуры состояния
@@ -80,7 +82,11 @@ class MainIPCLeaseManager2P:
         # lease_id (int) -> LeaseState
         self.leases: Dict[int, LeaseState] = {}
         
-        self.logger = logging.getLogger("LeaseManager")
+        self.logger = logging.getLogger("zerolink.lease_manager")
+        if not self.logger.handlers:
+            handler = logging.StreamHandler()
+            handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
+            self.logger.addHandler(handler)
         self.logger.setLevel(logging.INFO)
 
     def register_worker(self, sock: socket.socket, device_id: int):
@@ -88,7 +94,7 @@ class MainIPCLeaseManager2P:
         fd = sock.fileno()
         with self.lock:
             self.workers[fd] = WorkerState(sock=sock, device_id=device_id)
-            self.logger.info(f"Worker registered: fd={fd}, device={device_id}")
+            self.logger.info(json.dumps({"event": "worker_registered", "fd": fd, "device_id": device_id}))
 
     def unregister_worker(self, fd: int):
         """Удаляет воркера и очищает его аренды."""
@@ -99,7 +105,7 @@ class MainIPCLeaseManager2P:
                 # В реальной системе нужно возвращать память в пул
                 to_remove = [lid for lid, l in self.leases.items() if l.worker_id == fd]
                 for lid in to_remove:
-                    self.logger.warning(f"Revoking lease {lid} due to worker disconnect")
+                    self.logger.warning(json.dumps({"event": "lease_revoked_disconnect", "lease_id": lid, "worker_fd": fd}))
                     self._revoke_lease(lid)
 
     def grant_lease(self, worker_fd: int, allocation: DeviceAllocation) -> int:
@@ -107,6 +113,7 @@ class MainIPCLeaseManager2P:
         Инициирует выдачу аренды воркеру (Отправляет ALLOC).
         Возвращает lease_id.
         """
+        start_ts = time.time()
         with self.lock:
             worker = self.workers.get(worker_fd)
             if not worker:
@@ -162,7 +169,8 @@ class MainIPCLeaseManager2P:
                 # ALLOC = Type 2
                 send_frame_with_fds(worker.sock, MSG_ALLOC, 0, wrapper, fds, flags=ctrl_flags)
             except Exception as e:
-                self.logger.error(f"Failed to send ALLOC to worker {worker_fd}: {e}")
+                record_alloc_failure("server", "send_alloc")
+                self.logger.error(json.dumps({"event": "send_alloc_failed", "worker_fd": worker_fd, "error": str(e)}))
                 raise
             
             # 5. Сохранение состояния
@@ -173,9 +181,12 @@ class MainIPCLeaseManager2P:
                 alloc_id=alloc_id,
                 expected_hash=expected_hash
             )
+            update_active_leases(len(self.leases))
+            record_lease_event("server", "created")
+            observe_runtime_latency("server_grant_lease", time.time() - start_ts)
             return lease_id
 
-    def handle_message(self, fd: int, mtype: int, req_id: int, payload: bytes):
+    def handle_message(self, fd: int, mtype: int, req_id: int, payload: bytes, mflags: int = 0):
         """Обрабатывает входящее сообщение от воркера."""
         with self.lock:
             # Обновляем heartbeat
@@ -183,19 +194,18 @@ class MainIPCLeaseManager2P:
                 self.workers[fd].last_seen = time.time()
             
             if mtype == MSG_ACK:
-                self._handle_ack(fd, payload)
+                self._handle_ack(fd, payload, mflags)
             elif mtype == MSG_RELEASE:
                 self._handle_release(fd, payload)
             elif mtype == MSG_PONG:
                 pass # Просто обновили last_seen
             elif mtype == MSG_ERROR:
-                self.logger.error(f"Received ERROR from worker {fd}")
+                self.logger.error(json.dumps({"event": "worker_error_message", "worker_fd": fd}))
 
-    def _handle_ack(self, fd: int, payload: bytes):
-        lease_id, alloc_id, got_hash = unpack_ack_payload(payload, 0)
-        # flags check skipped for simplicity
+    def _handle_ack(self, fd: int, payload: bytes, mflags: int):
+        lease_id, alloc_id, got_hash = unpack_ack_payload(payload, mflags)
         if lease_id not in self.leases:
-            self.logger.warning(f"ACK for unknown lease {lease_id}")
+            self.logger.warning(json.dumps({"event": "ack_unknown_lease", "lease_id": lease_id, "worker_fd": fd}))
             return
         
         lease = self.leases[lease_id]
@@ -205,16 +215,18 @@ class MainIPCLeaseManager2P:
         # Проверка хеша (если воркер прислал)
         if self.enable_integrity_hash and got_hash:
             if got_hash != lease.expected_hash:
-                self.logger.error(f"Hash mismatch for lease {lease_id}!")
+                record_alloc_failure("server", "hash_mismatch")
+                self.logger.error(json.dumps({"event": "lease_hash_mismatch", "lease_id": lease_id, "worker_fd": fd}))
                 self._revoke_lease(lease_id)
                 return
         
         lease.status = "ACTIVE"
-        self.logger.info(f"Lease {lease_id} is now ACTIVE on worker {fd}")
+        record_lease_event("server", "active")
+        self.logger.info(json.dumps({"event": "lease_active", "lease_id": lease_id, "worker_fd": fd}))
 
     def _handle_release(self, fd: int, payload: bytes):
         lease_id, _ = unpack_release_payload(payload)
-        self.logger.info(f"Worker {fd} released lease {lease_id}")
+        self.logger.info(json.dumps({"event": "lease_released_by_worker", "worker_fd": fd, "lease_id": lease_id}))
         self._revoke_lease(lease_id)
 
     def _revoke_lease(self, lease_id: int):
@@ -225,6 +237,8 @@ class MainIPCLeaseManager2P:
             # Но только если Main сам больше не использует эту память.
             # Здесь мы просто удаляем запись об аренде.
             del self.leases[lease_id]
+            update_active_leases(len(self.leases))
+            record_lease_event("server", "revoked")
 
     def _get_backing_fds(self, allocation: DeviceAllocation) -> Tuple[List[Dict], List[int]]:
         """ 
@@ -326,6 +340,12 @@ class MainServer:
         self.selector = selectors.DefaultSelector()
         self.server_sock: Optional[socket.socket] = None
         self._running = False
+        self.logger = logging.getLogger("zerolink.server")
+        if not self.logger.handlers:
+            handler = logging.StreamHandler()
+            handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
+            self.logger.addHandler(handler)
+        self.logger.setLevel(logging.INFO)
 
     def start(self):
         """Инициализация сокета и запуск лупа (блокирующий вызов)."""
@@ -342,7 +362,7 @@ class MainServer:
         self.selector.register(self.server_sock, selectors.EVENT_READ, data=None)
         
         self._running = True
-        print(f"[Server] Listening on {self.socket_path}")
+        self.logger.info(json.dumps({"event": "server_listening", "socket_path": self.socket_path}))
         
         try:
             while self._running:
@@ -354,7 +374,8 @@ class MainServer:
                         self._handle_client_data(key, mask)
                 # Здесь можно добавить self.manager.check_heartbeats()
         except Exception as e:
-            print(f"[Server] Event loop error: {e}")
+            record_alloc_failure("server", "event_loop")
+            self.logger.exception(json.dumps({"event": "server_event_loop_error", "error": str(e)}))
         finally:
             self.stop()
 
@@ -405,17 +426,18 @@ class MainServer:
                     key.data["state"] = "CONNECTED"
                     # Можно ответить ACK
                 else:
-                    print(f"[Server] Expected HELLO, got {mtype}")
+                    self.logger.warning(json.dumps({"event": "server_expected_hello", "got_type": mtype}))
                     self._close_client(key)
             else:
                 # Делегируем менеджеру
-                self.manager.handle_message(sock.fileno(), mtype, req_id, payload)
+                self.manager.handle_message(sock.fileno(), mtype, req_id, payload, flags)
                 # Закрываем входящие FD, если они не нужны (менеджер их не забирает при приеме)
                 # В текущем протоколе воркер не шлет FD серверу, только наоборот.
                 for fd in fds:
                     os.close(fd)
         except Exception as e:
-            print(f"[Server] Client error: {e}")
+            record_alloc_failure("server", "client_handler")
+            self.logger.error(json.dumps({"event": "server_client_error", "error": str(e)}))
             self._close_client(key)
 
     def _close_client(self, key):

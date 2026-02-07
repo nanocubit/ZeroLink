@@ -14,23 +14,29 @@ import socket
 import struct
 import weakref
 import threading
+import json
+import logging
+import time
 import torch
 from dataclasses import dataclass, field
 from typing import Optional, Tuple, List, Dict, Any
 
 # Импорты из нашего пакета
 from ..core.protocol import (
-    MSG_HELLO, MSG_ALLOC, MSG_ACK, MSG_RELEASE, 
+    MSG_HELLO, MSG_ALLOC, MSG_ACK, MSG_RELEASE,
     MSG_ERROR, MSG_PING, MSG_PONG,
+    CTRL_FLAG_HAS_HASH,
     pack_ctrl,
-    send_frame, send_frame_with_fds,
+    recv_frame_with_fds,
     unpack_alloc_payload,
     pack_ack_payload,
     pack_release_payload,
     pack_error_payload,
     unpack_ipc_payload,
-    hash32
+    hash32,
 )
+
+from ..monitoring.telemetry import observe_runtime_latency, record_alloc_failure, record_lease_event, update_active_leases
 
 # ============================================================================
 # Локальные структуры данных
@@ -68,6 +74,12 @@ class GPUWorker:
         self.lock = threading.RLock()
         self._send_lock = threading.Lock()
         self._running = True
+        self.logger = logging.getLogger("zerolink.worker")
+        if not self.logger.handlers:
+            handler = logging.StreamHandler()
+            handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
+            self.logger.addHandler(handler)
+        self.logger.setLevel(logging.INFO)
 
     # --------------------------------------------------------------------------
     # Lifecycle: Connect / Shutdown
@@ -86,9 +98,9 @@ class GPUWorker:
             
             # HELLO handshake
             payload = struct.pack("<II", self.device_id, 0)
-            send_frame(self.sock, MSG_HELLO, 0, payload)
+            self._send_frame(MSG_HELLO, 0, payload)
             
-            print(f"[Worker] Connected to {self.sock_path}, device={self.device_id}")
+            self.logger.info(json.dumps({"event": "worker_connected", "sock_path": self.sock_path, "device_id": self.device_id}))
             
         except FileNotFoundError:
             raise RuntimeError(f"Socket file not found: {self.sock_path}")
@@ -128,23 +140,10 @@ class GPUWorker:
             return False
         
         try:
-            # В реальном проекте здесь импорт из core.protocol.framing
-            # mtype, mflags, req_id, payload, fds = recv_frame_with_fds(self.sock)
-            
-            # Для демонстрации создадим фейковую функцию recv_frame_with_fds здесь, 
-            # чтобы этот файл был автономным.
-            # Либо (что лучше) импортируем из ..core.protocol.framing
-            
-            # ВНИМАНИЕ: Для работы скрипта я добавлю локальную реализацию recv, 
-            # чтобы избежать ошибок импорта, так как framing.py находится в другой папке 
-            # и импорты зависят от конкретного пути проекта.
-            # В реальном проекте просто: from ..core.protocol.framing import recv_frame_with_fds
-            
-            # Заглушка для автономности файла:
-            mtype, mflags, req_id, payload, fds = self._recv_frame_with_fds_stub(self.sock)
+            mtype, mflags, req_id, payload, fds = recv_frame_with_fds(self.sock)
 
-        except (ConnectionResetError, BrokenPipeError, OSError):
-            print("[Worker] Connection lost")
+        except (ConnectionResetError, BrokenPipeError, OSError) as e:
+            self.logger.warning(json.dumps({"event": "worker_connection_lost", "error": str(e)}))
             return False
 
         # Обработка сообщений
@@ -155,8 +154,7 @@ class GPUWorker:
                 except OSError: pass
             
             # Отвечаем PONG
-            with self._send_lock:
-                send_frame(self.sock, MSG_PONG, req_id, b"")
+            self._send_frame(MSG_PONG, req_id, b"")
             return True
 
         # Обработка ALLOC (Импорт памяти)
@@ -172,16 +170,12 @@ class GPUWorker:
         # Прочие сообщения игнорируем
         return True
 
-    # Локальный заглушка recv_frame_with_fds для автономности файла (чтобы не падал при запуске)
-    def _recv_frame_with_fds_stub(self, sock: socket.socket):
-        # ... (код из framing.py, интегрированный сюда для автономности) ...
-        pass
-
     def _handle_alloc(self, ctrl_flags: int, req_id: int, payload: bytes, fds: List[int]):
         """Обработка запроса на выделение памяти."""
         lease_id = 0
         alloc_id = "<unknown>"
 
+        start_ts = time.time()
         try:
             lease_id, mapping_payload, expected_hash = unpack_alloc_payload(payload, ctrl_flags)
             
@@ -234,6 +228,8 @@ class GPUWorker:
                     region=region, 
                     alloc_id=alloc_id
                 )
+                update_active_leases(len(self.active_leases))
+                record_lease_event("worker", "created")
 
             # 6. Отправляем ACK
             # Если Main прислал хеш, Worker должен ответить с ним?
@@ -245,13 +241,16 @@ class GPUWorker:
             else:
                 self._send_frame(MSG_ACK, req_id, pack_ack_payload(lease_id, alloc_id)) 
 
+            observe_runtime_latency("worker_handle_alloc", time.time() - start_ts)
+
         except Exception as e:
             # Best-effort ERROR
             try:
                 self._send_frame(MSG_ERROR, req_id, pack_error_payload(lease_id, alloc_id, 1, str(e)))
             except Exception:
                 pass
-            print(f"[Worker] ALLOC failed lease={lease_id} alloc={alloc_id}: {e}")
+            record_alloc_failure("worker", "alloc_import")
+            self.logger.error(json.dumps({"event": "worker_alloc_failed", "lease_id": lease_id, "alloc_id": alloc_id, "error": str(e)}))
 
         finally:
             # КРИТИЧНО: Закрываем FD
@@ -304,7 +303,7 @@ class GPUWorker:
         with self.lock:
             entry = self.active_leases.get(lease_id)
             if not entry:
-                print(f"[Worker] Warning: Release unknown lease {lease_id}")
+                self.logger.warning(json.dumps({"event": "worker_release_unknown_lease", "lease_id": lease_id}))
                 return
 
             # Блокируем новые операции
@@ -330,16 +329,22 @@ class GPUWorker:
             rel_pl = pack_release_payload(lease_id, alloc_id)
             self._send_frame(MSG_RELEASE, 0, rel_pl)
         except OSError as e:
-            print(f"[Worker] Failed to send RELEASE {lease_id}: {e}")
+            self.logger.error(json.dumps({"event": "worker_release_send_failed", "lease_id": lease_id, "error": str(e)}))
             return
 
         # Удаление из словаря
         with self.lock:
             self.active_leases.pop(lease_id, None)
+            update_active_leases(len(self.active_leases))
+            record_lease_event("worker", "released")
 
     def _cleanup_lease(self, lease_id: int):
         with self.lock:
             self.active_leases.pop(lease_id, None)
+            update_active_leases(len(self.active_leases))
+            record_lease_event("worker", "cleaned")
+            update_active_leases(len(self.active_leases))
+            record_lease_event("worker", "released")
 
     # --------------------------------------------------------------------------
     # Внутренние методы (Helper)

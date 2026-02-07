@@ -25,27 +25,27 @@ def realistic_performance_estimation():
     metrics = {
         "IPC Bandwidth": {
             "traditional": "~100-500 MB/s (через pickle)",
-            "pynexus": ">850 MB/s (zero-copy)",
+            "zerolink": ">850 MB/s (zero-copy)",
             "improvement": "2-10x быстрее"
         },
         "Allocation Speed": {
             "traditional": "O(log n) - зависит от состояния пула",
-            "pynexus": "O(1) - через Buddy Allocator",
+            "zerolink": "O(1) - через Buddy Allocator",
             "improvement": "2-5x быстрее"
         },
         "Memory Efficiency": {
             "traditional": "Высокое потребление (дублирование тензоров)",
-            "pynexus": "Минимизированное (zero-copy sharing)",
+            "zerolink": "Минимизированное (zero-copy sharing)",
             "improvement": "2-5x меньше памяти"
         },
         "Fragmentation": {
             "traditional": "Высокая (особенно при длительных сессиях)",
-            "pynexus": "Минимальная (Buddy Allocator + defragmentation)",
+            "zerolink": "Минимальная (Buddy Allocator + defragmentation)",
             "improvement": "5-10x меньше фрагментации"
         },
         "Latency": {
             "traditional": "Высокая (сериализация + копирование)",
-            "pynexus": "Низкая (прямой доступ к памяти)",
+            "zerolink": "Низкая (прямой доступ к памяти)",
             "improvement": "10-30% снижение"
         }
     }
@@ -53,7 +53,7 @@ def realistic_performance_estimation():
     for metric, values in metrics.items():
         print(f"{metric}:")
         print(f"  Традиционный подход: {values['traditional']}")
-        print(f"  ZeroLink: {values['pynexus']}")
+        print(f"  ZeroLink: {values['zerolink']}")
         print(f"  Улучшение: {values['improvement']}\n")
     
     # Сценарии использования и потенциальный прирост
@@ -118,17 +118,17 @@ def realistic_performance_estimation():
         "Standard PyTorch": {
             "pros": "Простота, зрелость",
             "cons": "Высокое потребление памяти, фрагментация",
-            "vs_pynexus": "ZeroLink обеспечивает 2-5x более эффективное использование памяти"
+            "vs_zerolink": "ZeroLink обеспечивает 2-5x более эффективное использование памяти"
         },
         "Custom CUDA Kernels": {
             "pros": "Максимальная производительность для специфичных задач",
             "cons": "Высокая сложность разработки и поддержки",
-            "vs_pynexus": "ZeroLink предоставляет универсальное решение с меньшей сложностью"
+            "vs_zerolink": "ZeroLink предоставляет универсальное решение с меньшей сложностью"
         },
         "NCCL": {
             "pros": "Высокая производительность для collective операций",
             "cons": "Ограниченная применимость (не для произвольного IPC)",
-            "vs_pynexus": "ZeroLink дополняет NCCL, обеспечивая эффективный point-to-point IPC"
+            "vs_zerolink": "ZeroLink дополняет NCCL, обеспечивая эффективный point-to-point IPC"
         }
     }
     
@@ -136,7 +136,7 @@ def realistic_performance_estimation():
         print(f"{solution}:")
         print(f"  Плюсы: {details['pros']}")
         print(f"  Минусы: {details['cons']}")
-        print(f"  PyNexus vs: {details['vs_pynexus']}\n")
+        print(f"  ZeroLink vs: {details['vs_zerolink']}\n")
     
     print("Заключение:")
     print("ZeroLink v2.0 обеспечивает значительный прирост производительности")
