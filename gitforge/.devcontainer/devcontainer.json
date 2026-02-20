@@ -1,0 +1,19 @@
+{
+  "name": "GitForge MCP IDE",
+  "image": "mcr.microsoft.com/devcontainers/rust:1-bullseye",
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": { "version": "20.18" },
+    "ghcr.io/devcontainers/features/rust-debugger": {}
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "rust-lang.rust-analyzer",
+        "tauri-apps.tauri-vscode",
+        "Vue.volar",
+        "ms-vscode.vscode-json"
+      ]
+    }
+  },
+  "forwardPorts": [1420, 6767]
+}
