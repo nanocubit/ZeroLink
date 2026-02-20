@@ -1,0 +1,19 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "GitForge",
+  "version": "2.0.0",
+  "identifier": "dev.gitforge.app",
+  "build": {
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "GitForge",
+        "width": 1600,
+        "height": 900
+      }
+    ]
+  }
+}
