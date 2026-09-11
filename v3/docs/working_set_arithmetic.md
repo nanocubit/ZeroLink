@@ -88,13 +88,15 @@ total_live_set = 6291456 * 10  # 62,914,560 bytes = 60 MB
 ## Ling-3.0-tiny
 
 ```python
-# Config (from HF) — VERIFY moe_intermediate_size!
+# Config (CONFIRMED from HF config.json)
+# URL: https://huggingface.co/inclusionAI/Ling-3.0-tiny/blob/main/config.json
 num_experts = 128
 num_experts_per_tok = 8
 num_shared_experts = 1
 hidden_size = 1536
-moe_intermediate_size = 512  # ⚠️ VERIFY: seems low for 1536-dim model
-num_moe_layers = 23  # layers 1..23 (layer 0 is dense)
+moe_intermediate_size = 512  # ✅ CONFIRMED (not a typo)
+num_hidden_layers = 24  # All layers are MoE
+num_moe_layers = 24
 
 # Calculation
 params_per_expert = 2 * 1536 * 512  # 1,572,864 params
@@ -105,20 +107,21 @@ per_token_traversal_per_layer = (8 + 1) * 3145728  # 28,311,552 bytes = 27 MB
 # Assuming high reuse (p_window_10 ≈ 0.9 from TinyMoE analogy)
 # Upper bound: min(10 × 9, 128 + 1) = min(90, 129) = 90 experts
 # Practical estimate: 20–40 distinct experts over W=10
+live_set_experts_predicted = 30  # estimate
 live_set_per_layer_predicted = 30 * 3145728  # 94,371,840 bytes = 90 MB (estimate)
-total_live_set_predicted = 94371840 * 23  # 2,170,552,320 bytes = 2.0 GB (estimate)
+total_live_set_predicted = 94371840 * 24  # 2,264,924,160 bytes = 2.11 GB (estimate)
 ```
 
 **Result:**
 - Per-token traversal per layer: **27 MB**
 - Live set per layer (predicted, W=10): **~90 MB** (estimate, not measured)
-- Total live set (predicted): **~2.0 GB** (estimate, not measured)
+- Total live set (predicted): **~2.11 GB** (estimate, not measured)
 - Mac SLC: **8–96 MB**
 - RAM: **4–16 GB**
 - **Conclusion:** Does NOT fit in SLC on any Mac. Fits in RAM on 8+ GB machines → cold reads paid once per layer over window, but may thrash on 4 GB RAM
 
 **⚠️ Caveats:**
-- `moe_intermediate_size = 512` seems suspiciously low. If actual value is 2048 or 3072, multiply all Ling numbers by 4–6.
+- `moe_intermediate_size = 512` confirmed in config.json (NOT a typo)
 - Live set is predicted from TinyMoE analogy, not measured. Trace extraction script ready but not run.
 - If `p_window_10` is lower than TinyMoE (e.g., 0.7 instead of 0.95), live set could be 2–3×¹ higher.
 
@@ -159,7 +162,7 @@ total_live_set_predicted = 14680064000 * 48  # 704,643,072,000 bytes = 656 GB (e
 | Model | Per-token Traversal/Layer | Live Set/Layer (W=10) | Total Live Set | Fits in SLC (M1 8MB)? | Fits in SLC (M1 Max 48MB)? | Fits in RAM (8GB)? | Storage Bottleneck? |
 |-------|---------------------------|------------------------|----------------|------------------------|----------------------------|---------------------|---------------------|
 | TinyMoE-100m | 4 MB | 6 MB (measured) | 60 MB | ❌ | ✅ | ✅ | No (fits in SLC on M1 Max) |
-| Ling-3.0-tiny | 27 MB | ~90 MB (predicted) | ~2.0 GB (predicted) | ❌ | ❌ | ⚠️ (tight on 4GB) | No (fits in RAM on 8GB+) |
+| Ling-3.0-tiny | 27 MB | ~90 MB (predicted) | ~2.11 GB (predicted) | ❌ | ❌ | ⚠️ (tight on 4GB) | No (fits in RAM on 8GB+) |
 | Qwen3.5-35B-A3B | 2.5 GB | ~13.7 GB (predicted) | ~656 GB (predicted) | ❌ | ❌ | ❌ | **Yes** |
 
 ## Apple SLC Numbers (Corrected)
@@ -203,15 +206,14 @@ total_live_set_predicted = 14680064000 * 48  # 704,643,072,000 bytes = 656 GB (e
 ## Next Steps
 
 1. **Run Ling trace extraction** (Colab script ready) → measure actual `p_window_10` and live set
-2. **Verify `moe_intermediate_size` for Ling** → check config.json on HF
-3. **Run trace on Qwen3.5-35B-A3B or Mixtral 8x7B** → measure live set for large MoE
-4. **Optimize storage for large MoE only:** Packed layout, fd-cache, parallel reads
-5. **Update falsification.md:** Q2 answered for small MoE (measured), reformulate for large MoE (predicted)
+2. **Run trace on Qwen3.5-35B-A3B or Mixtral 8x7B** → measure live set for large MoE
+3. **Optimize storage for large MoE only:** Packed layout, fd-cache, parallel reads
+4. **Update falsification.md:** Q2 answered for small MoE (measured), reformulate for large MoE (predicted)
 
 ## Caveats
 
 1. **Ling numbers are predicted, not measured.** Trace extraction script ready but not run.
-2. **`moe_intermediate_size = 512` for Ling seems low.** If actual value is 2048 or 3072, multiply all Ling numbers by 4–6.
+2. **`moe_intermediate_size = 512` for Ling confirmed** in config.json (NOT a typo).
 3. **Reuse assumptions based on TinyMoE.** Large MoE may have different routing patterns.
 4. **SLC numbers from Apple documentation.** Actual effective cache may vary due to OS, background tasks, etc.
 5. **BF16 assumed.** INT4 quantization reduces expert size by 4×¹, but may affect accuracy.
@@ -219,7 +221,7 @@ total_live_set_predicted = 14680064000 * 48  # 704,643,072,000 bytes = 656 GB (e
 ## References
 
 - TinyMoE config: `FlameF0X/TinyMoE-100m-2x8`
-- Ling-3.0-tiny config: `inclusionAI/Ling-3.0-tiny` (HF)
+- Ling-3.0-tiny config: `inclusionAI/Ling-3.0-tiny` (HF config.json confirmed)
 - Qwen3.5-35B-A3B config: `Qwen/Qwen3.5-35B-A3B` (HF)
 - Apple SLC sizes: Apple Silicon CPU Optimization Guide (Table 3-1, 3-2)
 - Mac cache analysis: https://www.cpu-world.com/
