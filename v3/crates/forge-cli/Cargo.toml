@@ -1,0 +1,15 @@
+[package]
+name = "forge-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "forge"
+path = "src/main.rs"
+
+[dependencies]
+forge-core.workspace = true
+forge-store.workspace = true
+serde_json.workspace = true
+clap.workspace = true
